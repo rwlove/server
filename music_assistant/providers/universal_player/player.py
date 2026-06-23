@@ -75,7 +75,7 @@ class UniversalPlayer(Player):
     def supported_features(self) -> set[PlayerFeature]:
         """Return the supported features of the player."""
         if ext_player := self._get_external_source_protocol_player():
-            return ext_player.supported_features
+            return ext_player.supported_features - {PlayerFeature.PLAY_MEDIA}
         return self._attr_supported_features
 
     @property
@@ -127,6 +127,27 @@ class UniversalPlayer(Player):
             return ext_player.source_list
         return super().source_list
 
+    @property
+    def volume_level(self) -> int | None:
+        """Return the current volume level (0..100) of the player."""
+        if ext_player := self._get_external_source_protocol_player():
+            return ext_player.volume_level
+        return self._attr_volume_level
+
+    @property
+    def volume_muted(self) -> bool | None:
+        """Return the current mute state of the player."""
+        if ext_player := self._get_external_source_protocol_player():
+            return ext_player.volume_muted
+        return self._attr_volume_muted
+
+    @property
+    def powered(self) -> bool | None:
+        """Return if the player is powered on."""
+        if ext_player := self._get_external_source_protocol_player():
+            return ext_player.powered
+        return self._attr_powered
+
     async def stop(self) -> None:
         """Handle STOP command on the player."""
         if ext_player := self._get_external_source_protocol_player():
@@ -161,6 +182,22 @@ class UniversalPlayer(Player):
         if ext_player := self._get_external_source_protocol_player():
             await ext_player.seek(position)
             self.mass.players.trigger_player_update(ext_player.player_id, debounce_delay=2)
+
+    async def volume_set(self, volume_level: int) -> None:
+        """Handle VOLUME_SET command on the player."""
+        if ext_player := self._get_external_source_protocol_player():
+            # volume_level is already scaled to device range, forward it as-is.
+            await ext_player.volume_set(volume_level)
+
+    async def volume_mute(self, muted: bool) -> None:
+        """Handle VOLUME_MUTE command on the player."""
+        if ext_player := self._get_external_source_protocol_player():
+            await ext_player.volume_mute(muted)
+
+    async def power(self, powered: bool) -> None:
+        """Handle POWER command on the player."""
+        if ext_player := self._get_external_source_protocol_player():
+            await ext_player.power(powered)
 
     def add_protocol_player(self, protocol_player_id: str) -> None:
         """Add a protocol player to this universal player."""
