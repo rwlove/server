@@ -94,6 +94,8 @@ from music_assistant.controllers.player_queues.constants import (
     CONF_DEFAULT_ENQUEUE_SELECT_ARTIST,
     ENQUEUE_SELECT_ALBUM_DEFAULT_VALUE,
     ENQUEUE_SELECT_ARTIST_DEFAULT_VALUE,
+    FLOW_STREAM_EOF_GRACE_SECONDS,
+    FLOW_STREAM_REPORTED_END_MARGIN_SECONDS,
 )
 from music_assistant.controllers.player_queues.helpers import (
     CompareState,
@@ -1318,21 +1320,70 @@ class PlayerQueuesController(CoreController):
         # capture session_id so we can bail out if playback restarts
         original_session_id = queue.session_id
 
+        # stream-time sent to the player this session; used to detect flow EOF on
+        # players that report BUFFERING (as PLAYING) at end instead of going idle
+        total_streamed = sum(
+            entry.seconds_streamed
+            for entry in queue.flow_mode_stream_log
+            if entry.seconds_streamed is not None
+        )
+        eof_threshold = total_streamed + FLOW_STREAM_EOF_GRACE_SECONDS
+        reported_end = total_streamed - FLOW_STREAM_REPORTED_END_MARGIN_SECONDS
+        start_player = self.mass.players.get_player(queue_id)
+        start_updated = start_player.elapsed_time_last_updated if start_player else None
+
+        def _flow_finished_reason(player: Player, seen_progress: bool) -> str | None:
+            if not total_streamed or player.elapsed_time is None:
+                return None
+            # player reported playing to the streamed end; the fresh-status check
+            # (not seen_progress) rejects a stale position from the pre-restart stream
+            fresh = player.elapsed_time_last_updated is not None and (
+                start_updated is None or player.elapsed_time_last_updated > start_updated
+            )
+            if fresh and reported_end > 0 and player.elapsed_time >= reported_end:
+                return f"reported {player.elapsed_time:.0f}s of {total_streamed:.0f}s"
+            # backstop for players that go silent while stuck 'playing'
+            corrected = player.corrected_elapsed_time
+            if seen_progress and corrected is not None and corrected > eof_threshold:
+                return f"extrapolated {corrected:.0f}s past {total_streamed:.0f}s"
+            return None
+
         async def _resume_on_idle() -> None:
-            # wait for the player to finish playing the buffered audio and go idle
-            idle_detected = False
+            finished = False
+            # gate the backstop to this session's playback so a stale carried-over
+            # position can't finish a short track early
+            seen_progress = False
             for _ in range(60):
                 await asyncio.sleep(1)
                 if not queue.active or queue.session_id != original_session_id:
                     return
                 if queue.state == PlaybackState.IDLE:
-                    idle_detected = True
+                    finished = True
                     break
-            if not idle_detected:
+                player = self.mass.players.get_player(queue_id)
+                if player is None:
+                    continue
+                corrected = player.corrected_elapsed_time
+                if total_streamed and corrected is not None and corrected <= total_streamed:
+                    seen_progress = True
+                if reason := _flow_finished_reason(player, seen_progress):
+                    self.logger.debug(
+                        "Flow stream for %s finished without an idle report (%s)",
+                        queue.display_name,
+                        reason,
+                    )
+                    finished = True
+                    break
+            if not finished:
                 return
-            # player went idle, give it a brief moment to settle
+            # let the player settle, then re-validate before (re)starting
             await asyncio.sleep(1)
-            if queue.state != PlaybackState.IDLE or queue.session_id != original_session_id:
+            if not queue.active or queue.session_id != original_session_id:
+                return
+            player = self.mass.players.get_player(queue_id)
+            if queue.state != PlaybackState.IDLE and not (
+                player and _flow_finished_reason(player, seen_progress)
+            ):
                 return
             # check if new items were added to the queue after the flow stream ended
             if queue.current_index is not None and (

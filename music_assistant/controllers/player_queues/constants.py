@@ -21,3 +21,11 @@ CONF_DEFAULT_ENQUEUE_OPTION_FOLDER = "default_enqueue_option_folder"
 CONF_DEFAULT_ENQUEUE_OPTION_UNKNOWN = "default_enqueue_option_unknown"
 CACHE_CATEGORY_PLAYER_QUEUE_STATE = 0
 CACHE_CATEGORY_PLAYER_QUEUE_ITEMS = 1
+
+# tolerances for detecting flow EOF on players that don't report idle (notably
+# Cast groups, which underrun the LIVE stream and report BUFFERING - surfaced as
+# PLAYING). The reported-position path fires as soon as the player reports playing
+# to within this margin of the streamed total; the extrapolation backstop waits
+# this much past the total, kept above a typical network buffer blip.
+FLOW_STREAM_REPORTED_END_MARGIN_SECONDS = 1
+FLOW_STREAM_EOF_GRACE_SECONDS = 3
