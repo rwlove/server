@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from music_assistant_models.enums import PlaybackState, PlayerFeature
+from music_assistant_models.errors import UnsupportedFeaturedException
 
 from music_assistant.constants import EXTERNAL_SOURCES
 from music_assistant.models.player import DeviceInfo, Player
@@ -185,19 +186,31 @@ class UniversalPlayer(Player):
 
     async def volume_set(self, volume_level: int) -> None:
         """Handle VOLUME_SET command on the player."""
-        if ext_player := self._get_external_source_protocol_player():
-            # volume_level is already scaled to device range, forward it as-is.
-            await ext_player.volume_set(volume_level)
+        ext_player = self._get_external_source_protocol_player()
+        if ext_player is None:
+            raise UnsupportedFeaturedException(
+                f"{self.display_name} has no active source to control volume on"
+            )
+        # volume_level is already scaled to device range, forward it as-is.
+        await ext_player.volume_set(volume_level)
 
     async def volume_mute(self, muted: bool) -> None:
         """Handle VOLUME_MUTE command on the player."""
-        if ext_player := self._get_external_source_protocol_player():
-            await ext_player.volume_mute(muted)
+        ext_player = self._get_external_source_protocol_player()
+        if ext_player is None:
+            raise UnsupportedFeaturedException(
+                f"{self.display_name} has no active source to control mute on"
+            )
+        await ext_player.volume_mute(muted)
 
     async def power(self, powered: bool) -> None:
         """Handle POWER command on the player."""
-        if ext_player := self._get_external_source_protocol_player():
-            await ext_player.power(powered)
+        ext_player = self._get_external_source_protocol_player()
+        if ext_player is None:
+            raise UnsupportedFeaturedException(
+                f"{self.display_name} has no active source to control power on"
+            )
+        await ext_player.power(powered)
 
     def add_protocol_player(self, protocol_player_id: str) -> None:
         """Add a protocol player to this universal player."""
